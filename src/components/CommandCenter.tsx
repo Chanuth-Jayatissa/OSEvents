@@ -1,7 +1,9 @@
-import { useState } from "react";
+import { useState, useRef, useEffect } from "react";
 import { motion } from "framer-motion";
-import { RefreshCw, Edit3, CheckCircle, ChevronRight, Zap, FileText, Camera, Mail, Users, Palette } from "lucide-react";
+import { RefreshCw, Edit3, CheckCircle, ChevronRight, Zap, FileText, Camera, Mail, Users, Palette, Search, DollarSign, Shield, Send } from "lucide-react";
 import Icosahedron from "./Icosahedron";
+import { sendCommand, streamLogs, AgentLog } from "@/lib/api";
+import { toast } from "sonner";
 
 interface AgentCategory {
   id: string;
@@ -10,64 +12,152 @@ interface AgentCategory {
   tools: {
     id: string;
     name: string;
-    active: boolean;
-    status: string;
+    description: string;
   }[];
 }
 
 const agentCategories: AgentCategory[] = [
   {
-    id: "content",
-    name: "Content Engine",
-    icon: FileText,
-    tools: [
-      { id: "copywriter", name: "Copywriter Agent", active: true, status: "Drafting keynote intro script — analyzing speaker bio for tone matching..." },
-      { id: "designer", name: "Visual Designer", active: false, status: "Idle — awaiting content approval" },
-    ],
-  },
-  {
-    id: "media",
-    name: "Media Production",
+    id: "marketing",
+    name: "Marketing Factory",
     icon: Camera,
     tools: [
-      { id: "video", name: "Video Renderer", active: true, status: "Rendering 4K promo reel — frame 847/2400 — ETA 3m 22s" },
-      { id: "photo", name: "Photo Editor", active: false, status: "Batch processing 48 venue photos" },
+      { id: "image", name: "Image Sub-agent", description: "Creative Designer — Stable Diffusion on Vultr A40" },
+      { id: "video", name: "Video Sub-agent", description: "Cinematic Creator — CogVideoX on Vultr A40" },
     ],
   },
   {
-    id: "outreach",
-    name: "Outreach & Comms",
+    id: "sponsor",
+    name: "Sponsor Scout",
+    icon: Search,
+    tools: [
+      { id: "scraper", name: "Web Scraper", description: "Playwright + Google CSE — finds companies" },
+      { id: "tier", name: "Tier Matcher", description: "Gemini Flash + openpyxl — assigns sponsor tiers" },
+    ],
+  },
+  {
+    id: "project_manager",
+    name: "Project Manager",
+    icon: FileText,
+    tools: [
+      { id: "timeline", name: "Timeline Builder", description: "Gemini Flash + python-dateutil — builds Gantt timelines" },
+    ],
+  },
+  {
+    id: "communication",
+    name: "Communications",
     icon: Mail,
     tools: [
-      { id: "email", name: "Email Drafter", active: true, status: "Composing VIP invitation — personalizing for 12 recipients..." },
-      { id: "social", name: "Social Scheduler", active: false, status: "Queued: 6 posts for next 48h" },
+      { id: "discord", name: "Discord Sub-agent", description: "discord.py — creates servers, sends messages, DMs" },
+      { id: "email", name: "Email Sub-agent", description: "Gemini Flash + SendGrid — drafts & sends emails" },
     ],
   },
   {
-    id: "logistics",
-    name: "Crew & Logistics",
-    icon: Users,
+    id: "compliance",
+    name: "Compliance Shield",
+    icon: Shield,
     tools: [
-      { id: "venue", name: "Venue Coordinator", active: false, status: "Floor plan v3 approved — generating seating chart" },
-      { id: "brand", name: "Brand Inspector", active: true, status: "Scanning assets for brand compliance — 94% pass rate" },
+      { id: "rules", name: "Rule Extractor", description: "PyPDF2 + Gemini Flash — extracts venue constraints" },
     ],
   },
-];
-
-const terminalLines = [
-  { time: "14:32:01", agent: "COPYWRITER", msg: "Keynote script draft v2 complete — 1,847 words", type: "success" },
-  { time: "14:32:04", agent: "VIDEO_RENDER", msg: "GPU cluster allocated — 4x A100 — rendering at 60fps", type: "info" },
-  { time: "14:32:07", agent: "EMAIL_DRAFT", msg: "VIP template personalization: Sarah Chen → Tech Lead context loaded", type: "info" },
-  { time: "14:32:09", agent: "BRAND_CHECK", msg: "⚠ Logo placement on banner_v4.png violates 20px margin rule", type: "warning" },
-  { time: "14:32:12", agent: "SOCIAL_SCHED", msg: "Instagram carousel queued — 6 slides — publish: Mar 30, 9:00 AM", type: "success" },
-  { time: "14:32:15", agent: "VIDEO_RENDER", msg: "Frame 847/2400 complete — estimated completion: 14:35:24", type: "info" },
+  {
+    id: "context",
+    name: "Context Agent",
+    icon: Search,
+    tools: [
+      { id: "researcher", name: "Web Researcher", description: "Playwright + Google CSE + Gemini — finds relevant context" },
+    ],
+  },
+  {
+    id: "finance",
+    name: "Finance",
+    icon: DollarSign,
+    tools: [
+      { id: "budget", name: "Budget Planner", description: "Gemini Flash + openpyxl — builds event budgets" },
+      { id: "expense", name: "Expense Tracker", description: "Logs expenses, flags overruns" },
+    ],
+  },
 ];
 
 const CommandCenter = () => {
-  const [selectedCategory, setSelectedCategory] = useState("content");
+  const [selectedCategory, setSelectedCategory] = useState("marketing");
   const [commandInput, setCommandInput] = useState("");
+  const [terminalLogs, setTerminalLogs] = useState<AgentLog[]>([]);
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [activeAgentCount, setActiveAgentCount] = useState(0);
+  const terminalRef = useRef<HTMLDivElement>(null);
+  const cleanupRef = useRef<(() => void) | null>(null);
 
-  const activeAgents = 7;
+  // Auto-scroll terminal
+  useEffect(() => {
+    if (terminalRef.current) {
+      terminalRef.current.scrollTop = terminalRef.current.scrollHeight;
+    }
+  }, [terminalLogs]);
+
+  const handleSendCommand = async () => {
+    if (!commandInput.trim() || isProcessing) return;
+
+    const prompt = commandInput;
+    setCommandInput("");
+    setIsProcessing(true);
+
+    try {
+      const response = await sendCommand(prompt);
+      setActiveAgentCount(response.agents_dispatched.length);
+      toast.success(`Dispatched ${response.agents_dispatched.length} agent(s)`, {
+        description: response.intents.join(", "),
+      });
+
+      // Open SSE stream
+      if (cleanupRef.current) cleanupRef.current();
+
+      cleanupRef.current = streamLogs(
+        response.command_id,
+        (log) => {
+          setTerminalLogs((prev) => [...prev, log]);
+        },
+        () => {
+          setIsProcessing(false);
+          setActiveAgentCount(0);
+        },
+        () => {
+          setIsProcessing(false);
+          setActiveAgentCount(0);
+        },
+      );
+    } catch (error) {
+      toast.error("Failed to send command", {
+        description: error instanceof Error ? error.message : "Unknown error",
+      });
+      setIsProcessing(false);
+    }
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      handleSendCommand();
+    }
+  };
+
+  const getLogColor = (level: string) => {
+    switch (level) {
+      case "success": return "text-primary";
+      case "warning": return "text-electric";
+      case "error": return "text-destructive";
+      default: return "text-brass-light";
+    }
+  };
+
+  const formatTime = (ts: string) => {
+    try {
+      const d = new Date(ts);
+      return d.toLocaleTimeString("en-US", { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" });
+    } catch {
+      return "--:--:--";
+    }
+  };
 
   return (
     <div className="flex flex-1 overflow-hidden relative">
@@ -75,7 +165,9 @@ const CommandCenter = () => {
       <div className="w-[300px] border-r border-border bg-card overflow-y-auto p-3 flex flex-col gap-2">
         <div className="px-2 py-1.5">
           <h3 className="font-heading text-sm text-primary tracking-wide">Agent Workflows</h3>
-          <p className="text-[10px] text-muted-foreground mt-0.5 font-mono">{activeAgents} agents active</p>
+          <p className="text-[10px] text-muted-foreground mt-0.5 font-mono">
+            {isProcessing ? `${activeAgentCount} agents active` : "7 agents available"}
+          </p>
         </div>
 
         {agentCategories.map((cat) => {
@@ -110,20 +202,14 @@ const CommandCenter = () => {
                 >
                   {cat.tools.map((tool) => (
                     <div key={tool.id}>
-                      <div
-                        className={`px-2.5 py-1.5 rounded text-xs font-medium transition-all ${
-                          tool.active
-                            ? "bg-primary text-primary-foreground"
-                            : "text-muted-foreground hover:text-foreground"
-                        }`}
-                      >
+                      <div className="px-2.5 py-1.5 rounded text-xs font-medium text-muted-foreground hover:text-foreground transition-all">
                         <div className="flex items-center gap-1.5">
-                          {tool.active && <Zap size={10} />}
+                          <Zap size={10} className="text-primary" />
                           {tool.name}
                         </div>
                       </div>
                       <p className="text-[10px] text-muted-foreground px-2.5 py-1 leading-relaxed font-mono">
-                        {tool.status}
+                        {tool.description}
                       </p>
                     </div>
                   ))}
@@ -141,63 +227,87 @@ const CommandCenter = () => {
           <div className="flex items-center gap-2">
             <Palette size={14} className="text-brass" />
             <span className="text-xs text-muted-foreground font-mono">LIVE TERMINAL</span>
+            {isProcessing && (
+              <span className="text-[10px] font-mono text-primary bg-primary/10 px-2 py-0.5 rounded-full animate-pulse">
+                PROCESSING
+              </span>
+            )}
           </div>
           <div className="flex items-center gap-2">
-            <button className="flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-brass/40 text-brass text-xs hover:border-primary/40 hover:text-primary transition-colors">
-              <RefreshCw size={12} /> Regenerate
-            </button>
-            <button className="flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-brass/40 text-brass text-xs hover:border-primary/40 hover:text-primary transition-colors">
-              <Edit3 size={12} /> Edit
-            </button>
-            <button className="flex items-center gap-1.5 px-4 py-1.5 rounded-md bg-primary text-primary-foreground text-xs font-semibold hover:brightness-110 transition-all"
-              style={{ boxShadow: "0 0 12px hsl(43 72% 55% / 0.3)" }}
+            <button
+              onClick={() => setTerminalLogs([])}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-brass/40 text-brass text-xs hover:border-primary/40 hover:text-primary transition-colors"
             >
-              <CheckCircle size={12} /> Finalize
+              <RefreshCw size={12} /> Clear
             </button>
           </div>
         </div>
 
         {/* Terminal View */}
-        <div className="flex-1 overflow-y-auto p-4 font-mono text-xs space-y-1">
-          {terminalLines.map((line, i) => (
+        <div ref={terminalRef} className="flex-1 overflow-y-auto p-4 font-mono text-xs space-y-1">
+          {terminalLogs.length === 0 && (
+            <div className="flex flex-col items-center justify-center h-full text-muted-foreground/40 gap-3">
+              <Icosahedron size={40} spinning={false} />
+              <p className="text-sm">Enter a command to get started</p>
+              <p className="text-[10px]">Try: "Find 10 tech sponsors and generate a hype video"</p>
+            </div>
+          )}
+
+          {terminalLogs.map((line, i) => (
             <motion.div
               key={i}
               initial={{ opacity: 0, x: -10 }}
               animate={{ opacity: 1, x: 0 }}
-              transition={{ delay: i * 0.1 }}
+              transition={{ delay: 0.02 }}
               className="flex gap-3 py-1"
             >
-              <span className="text-muted-foreground shrink-0">{line.time}</span>
-              <span className={`shrink-0 w-28 ${
-                line.type === "success" ? "text-primary" : line.type === "warning" ? "text-electric" : "text-brass-light"
-              }`}>
-                [{line.agent}]
+              <span className="text-muted-foreground shrink-0">{formatTime(line.timestamp)}</span>
+              <span className={`shrink-0 w-32 ${getLogColor(line.level)}`}>
+                [{line.agent_name}]
               </span>
-              <span className="text-foreground/80">{line.msg}</span>
+              <span className="text-foreground/80">{line.message}</span>
             </motion.div>
           ))}
 
           {/* Blinking cursor */}
-          <div className="flex items-center gap-2 py-1 text-muted-foreground">
-            <span className="animate-pulse">▊</span>
-            <span className="text-brass/40">awaiting next directive...</span>
-          </div>
+          {!isProcessing && terminalLogs.length > 0 && (
+            <div className="flex items-center gap-2 py-1 text-muted-foreground">
+              <span className="animate-pulse">▊</span>
+              <span className="text-brass/40">awaiting next directive...</span>
+            </div>
+          )}
+
+          {isProcessing && (
+            <div className="flex items-center gap-2 py-1 text-primary">
+              <Icosahedron size={14} spinning />
+              <span className="text-primary/60 animate-pulse">agents working...</span>
+            </div>
+          )}
         </div>
       </div>
 
       {/* Bottom Command Bar */}
       <div className="absolute bottom-4 left-[320px] right-4 z-40">
         <div className="glass-dark border border-border rounded-full px-4 py-2.5 flex items-center gap-3 shadow-lg" style={{ boxShadow: "0 -4px 30px hsl(0 0% 0% / 0.5)" }}>
-          <Icosahedron size={22} spinning={true} />
+          <Icosahedron size={22} spinning={isProcessing} />
           <input
             type="text"
             value={commandInput}
             onChange={(e) => setCommandInput(e.target.value)}
+            onKeyDown={handleKeyDown}
             placeholder="Tell the agents what to do next..."
             className="flex-1 bg-transparent text-sm text-foreground placeholder:text-muted-foreground outline-none"
+            disabled={isProcessing}
           />
+          <button
+            onClick={handleSendCommand}
+            disabled={isProcessing || !commandInput.trim()}
+            className="p-1.5 rounded-full hover:bg-primary/10 transition-colors disabled:opacity-30"
+          >
+            <Send size={16} className="text-primary" />
+          </button>
           <span className="text-[10px] font-mono text-primary bg-primary/10 px-2 py-0.5 rounded-full">
-            {activeAgents} agents
+            {isProcessing ? `${activeAgentCount} active` : "7 agents"}
           </span>
         </div>
       </div>

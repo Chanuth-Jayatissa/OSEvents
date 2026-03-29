@@ -4,6 +4,7 @@ import CommandCenter from "@/components/CommandCenter";
 import VaultView from "@/components/VaultView";
 import SponsorHub from "@/components/SponsorHub";
 import LogisticsView from "@/components/LogisticsView";
+import FinanceView from "@/components/FinanceView";
 
 const Index = () => {
   const [activeTab, setActiveTab] = useState("command");
@@ -16,6 +17,7 @@ const Index = () => {
         {activeTab === "vault" && <VaultView />}
         {activeTab === "sponsors" && <SponsorHub />}
         {activeTab === "logistics" && <LogisticsView />}
+        {activeTab === "finance" && <FinanceView />}
       </div>
     </div>
   );

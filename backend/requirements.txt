@@ -1,0 +1,15 @@
+fastapi
+uvicorn[standard]
+google-genai
+motor
+pydantic
+python-dotenv
+sse-starlette
+playwright
+openpyxl
+python-dateutil
+PyPDF2
+aiohttp
+discord.py
+sendgrid
+pdf2image

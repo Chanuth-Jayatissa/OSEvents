@@ -25,6 +25,11 @@ dist-ssr
 
 # env file
 .env
+backend/.env
 
-# venv
-.venv
+# Backend
+backend/uploads/
+backend/exports/
+__pycache__/
+*.pyc
+.venv/

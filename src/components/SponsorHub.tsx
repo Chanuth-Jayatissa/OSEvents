@@ -1,36 +1,53 @@
 import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { X, Send, SlidersHorizontal, Search } from "lucide-react";
+import { X, Send, Search } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
 import Icosahedron from "./Icosahedron";
-
-interface Lead {
-  id: string;
-  company: string;
-  industry: string;
-  contact: string;
-  score: number;
-  status: "ready" | "loading" | "contacted";
-}
-
-const leads: Lead[] = [
-  { id: "1", company: "Vercel", industry: "DevTools", contact: "Sarah Chen", score: 96, status: "ready" },
-  { id: "2", company: "Stripe", industry: "FinTech", contact: "Marcus Webb", score: 93, status: "ready" },
-  { id: "3", company: "Figma", industry: "Design", contact: "", score: 0, status: "loading" },
-  { id: "4", company: "Notion", industry: "Productivity", contact: "Ava Patel", score: 88, status: "ready" },
-  { id: "5", company: "Cloudflare", industry: "Infrastructure", contact: "James Liu", score: 91, status: "contacted" },
-  { id: "6", company: "Linear", industry: "DevTools", contact: "Nina Vasquez", score: 85, status: "ready" },
-  { id: "7", company: "Supabase", industry: "Database", contact: "", score: 0, status: "loading" },
-  { id: "8", company: "Datadog", industry: "Observability", contact: "Tom Richter", score: 79, status: "ready" },
-];
+import { fetchLeads, sendCommand, Lead } from "@/lib/api";
+import { toast } from "sonner";
 
 const SponsorHub = () => {
   const [selectedLead, setSelectedLead] = useState<Lead | null>(null);
   const [autoScan, setAutoScan] = useState(true);
 
+  const { data: leads = [], isLoading } = useQuery({
+    queryKey: ["leads"],
+    queryFn: () => fetchLeads(),
+    refetchInterval: 5000,
+  });
+
   const totalLeads = leads.length;
   const pending = leads.filter((l) => l.status === "loading").length;
   const contacted = leads.filter((l) => l.status === "contacted").length;
-  const avgScore = Math.round(leads.filter((l) => l.score > 0).reduce((a, b) => a + b.score, 0) / leads.filter((l) => l.score > 0).length);
+  const readyLeads = leads.filter((l) => l.score > 0);
+  const avgScore = readyLeads.length > 0
+    ? Math.round(readyLeads.reduce((a, b) => a + b.score, 0) / readyLeads.length)
+    : 0;
+
+  const handleOutreach = async (lead: Lead) => {
+    try {
+      await sendCommand(
+        `Send outreach email to ${lead.contact} at ${lead.company} for sponsorship`,
+        "default"
+      );
+      toast.success("Outreach initiated", {
+        description: `Email agent drafting for ${lead.contact} at ${lead.company}`,
+      });
+      setSelectedLead(null);
+    } catch (error) {
+      toast.error("Failed to initiate outreach");
+    }
+  };
+
+  const tierColor = (tier: string) => {
+    switch (tier.toLowerCase()) {
+      case "platinum": return "text-foreground bg-foreground/10";
+      case "gold": return "text-primary bg-primary/10";
+      case "silver": return "text-brass bg-brass/10";
+      case "bronze": return "text-muted-foreground bg-muted";
+      default: return "text-muted-foreground bg-muted";
+    }
+  };
 
   return (
     <div className="flex flex-col flex-1 overflow-hidden">
@@ -68,13 +85,8 @@ const SponsorHub = () => {
           </div>
 
           <div>
-            <span className="text-[10px] uppercase tracking-[0.15em] text-muted-foreground block mb-2">Search Radius</span>
-            <input type="range" min="10" max="100" defaultValue={50} className="w-full accent-gold h-1" />
-          </div>
-
-          <div>
             <span className="text-[10px] uppercase tracking-[0.15em] text-muted-foreground block mb-2">Industry</span>
-            {["DevTools", "FinTech", "Design", "Infrastructure", "Database"].map((ind) => (
+            {[...new Set(leads.map((l) => l.industry).filter(Boolean))].slice(0, 6).map((ind) => (
               <label key={ind} className="flex items-center gap-2 px-1 py-1 text-xs text-muted-foreground hover:text-foreground cursor-pointer">
                 <input type="checkbox" defaultChecked className="w-3 h-3 rounded border-brass accent-gold" />
                 {ind}
@@ -95,66 +107,87 @@ const SponsorHub = () => {
 
         {/* Main Table */}
         <div className="flex-1 overflow-y-auto relative">
-          <table className="w-full text-sm">
-            <thead className="sticky top-0 bg-card border-b border-border z-10">
-              <tr>
-                <th className="text-left px-4 py-3 text-[10px] uppercase tracking-[0.15em] text-muted-foreground font-normal">Company</th>
-                <th className="text-left px-4 py-3 text-[10px] uppercase tracking-[0.15em] text-muted-foreground font-normal">Industry</th>
-                <th className="text-left px-4 py-3 text-[10px] uppercase tracking-[0.15em] text-muted-foreground font-normal">Contact</th>
-                <th className="text-left px-4 py-3 text-[10px] uppercase tracking-[0.15em] text-muted-foreground font-normal">Match Score</th>
-                <th className="text-left px-4 py-3 text-[10px] uppercase tracking-[0.15em] text-muted-foreground font-normal">Action</th>
-              </tr>
-            </thead>
-            <tbody>
-              {leads.map((lead) => (
-                <motion.tr
-                  key={lead.id}
-                  className={`border-b border-border/50 cursor-pointer transition-colors ${
-                    lead.status === "loading" ? "gold-shimmer" : "hover:bg-muted/30"
-                  }`}
-                  onClick={() => lead.status === "ready" && setSelectedLead(lead)}
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                >
-                  <td className="px-4 py-3 font-medium text-foreground">{lead.company}</td>
-                  <td className="px-4 py-3 text-muted-foreground">{lead.industry}</td>
-                  <td className="px-4 py-3">
-                    {lead.status === "loading" ? (
-                      <div className="flex items-center gap-2">
-                        <Icosahedron size={16} spinning />
-                        <span className="text-muted-foreground/50 text-xs font-mono">Scanning...</span>
-                      </div>
-                    ) : (
-                      <span className="text-foreground">{lead.contact}</span>
-                    )}
-                  </td>
-                  <td className="px-4 py-3">
-                    {lead.score > 0 ? (
-                      <span
-                        className={`font-mono font-semibold ${lead.score >= 90 ? "text-primary text-gold-glow" : "text-foreground"}`}
-                      >
-                        {lead.score}%
-                      </span>
-                    ) : (
-                      <span className="text-muted-foreground/40">—</span>
-                    )}
-                  </td>
-                  <td className="px-4 py-3">
-                    {lead.status === "contacted" ? (
-                      <span className="text-[10px] font-mono text-brass uppercase">Contacted</span>
-                    ) : lead.status === "ready" ? (
-                      <button
-                        className="text-[10px] font-mono text-primary hover:text-gold-bright uppercase"
-                        onClick={(e) => { e.stopPropagation(); setSelectedLead(lead); }}
-                      >
-                        Reach Out →
-                      </button>
-                    ) : null}
-                  </td>
-                </motion.tr>
-              ))}
-            </tbody>
-          </table>
+          {isLoading ? (
+            <div className="flex flex-col items-center justify-center h-full gap-3">
+              <Icosahedron size={32} spinning />
+              <span className="text-sm text-muted-foreground">Loading leads...</span>
+            </div>
+          ) : leads.length === 0 ? (
+            <div className="flex flex-col items-center justify-center h-full gap-3 text-muted-foreground/40">
+              <Search size={48} />
+              <p className="text-sm">No sponsor leads yet</p>
+              <p className="text-[10px]">Use the Command Center: "Find 10 tech sponsors"</p>
+            </div>
+          ) : (
+            <table className="w-full text-sm">
+              <thead className="sticky top-0 bg-card border-b border-border z-10">
+                <tr>
+                  <th className="text-left px-4 py-3 text-[10px] uppercase tracking-[0.15em] text-muted-foreground font-normal">Company</th>
+                  <th className="text-left px-4 py-3 text-[10px] uppercase tracking-[0.15em] text-muted-foreground font-normal">Industry</th>
+                  <th className="text-left px-4 py-3 text-[10px] uppercase tracking-[0.15em] text-muted-foreground font-normal">Contact</th>
+                  <th className="text-left px-4 py-3 text-[10px] uppercase tracking-[0.15em] text-muted-foreground font-normal">Match</th>
+                  <th className="text-left px-4 py-3 text-[10px] uppercase tracking-[0.15em] text-muted-foreground font-normal">Tier</th>
+                  <th className="text-left px-4 py-3 text-[10px] uppercase tracking-[0.15em] text-muted-foreground font-normal">Action</th>
+                </tr>
+              </thead>
+              <tbody>
+                {leads.map((lead, i) => (
+                  <motion.tr
+                    key={lead.id || i}
+                    className={`border-b border-border/50 cursor-pointer transition-colors ${
+                      lead.status === "loading" ? "gold-shimmer" : "hover:bg-muted/30"
+                    }`}
+                    onClick={() => lead.status === "ready" && setSelectedLead(lead)}
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                  >
+                    <td className="px-4 py-3 font-medium text-foreground">{lead.company}</td>
+                    <td className="px-4 py-3 text-muted-foreground">{lead.industry}</td>
+                    <td className="px-4 py-3">
+                      {lead.status === "loading" ? (
+                        <div className="flex items-center gap-2">
+                          <Icosahedron size={16} spinning />
+                          <span className="text-muted-foreground/50 text-xs font-mono">Scanning...</span>
+                        </div>
+                      ) : (
+                        <span className="text-foreground">{lead.contact}</span>
+                      )}
+                    </td>
+                    <td className="px-4 py-3">
+                      {lead.score > 0 ? (
+                        <span className={`font-mono font-semibold ${lead.score >= 90 ? "text-primary text-gold-glow" : "text-foreground"}`}>
+                          {lead.score}%
+                        </span>
+                      ) : (
+                        <span className="text-muted-foreground/40">—</span>
+                      )}
+                    </td>
+                    <td className="px-4 py-3">
+                      {lead.recommended_tier ? (
+                        <span className={`text-[10px] font-mono uppercase px-2 py-0.5 rounded ${tierColor(lead.recommended_tier)}`}>
+                          {lead.recommended_tier}
+                        </span>
+                      ) : (
+                        <span className="text-muted-foreground/40">—</span>
+                      )}
+                    </td>
+                    <td className="px-4 py-3">
+                      {lead.status === "contacted" ? (
+                        <span className="text-[10px] font-mono text-brass uppercase">Contacted</span>
+                      ) : lead.status === "ready" ? (
+                        <button
+                          className="text-[10px] font-mono text-primary hover:text-gold-bright uppercase"
+                          onClick={(e) => { e.stopPropagation(); setSelectedLead(lead); }}
+                        >
+                          Reach Out →
+                        </button>
+                      ) : null}
+                    </td>
+                  </motion.tr>
+                ))}
+              </tbody>
+            </table>
+          )}
         </div>
       </div>
 
@@ -191,24 +224,23 @@ const SponsorHub = () => {
                 <div>
                   <span className="text-[10px] uppercase tracking-[0.15em] text-muted-foreground block mb-1">Context</span>
                   <p className="text-xs text-muted-foreground leading-relaxed">
-                    {selectedLead.company} is a strong match for GDG Annual Gala 2026 based on their {selectedLead.industry.toLowerCase()} focus and community involvement. Match score: {selectedLead.score}%.
+                    {selectedLead.company} is a strong match based on their {selectedLead.industry.toLowerCase()} focus.
+                    Match score: {selectedLead.score}%.
+                    {selectedLead.recommended_tier && ` Recommended tier: ${selectedLead.recommended_tier}.`}
+                    {selectedLead.reasoning && ` ${selectedLead.reasoning}`}
                   </p>
                 </div>
-                <div>
-                  <span className="text-[10px] uppercase tracking-[0.15em] text-muted-foreground block mb-1">Draft Message</span>
-                  <div className="bg-muted rounded-md p-3 text-xs text-foreground/80 leading-relaxed font-mono">
-                    Hi {selectedLead.contact?.split(" ")[0]},<br /><br />
-                    I'm reaching out on behalf of the GDG Annual Gala 2026 organizing team. Given {selectedLead.company}'s incredible work in {selectedLead.industry.toLowerCase()}, we believe a partnership would create tremendous value for both our communities.<br /><br />
-                    The Gala brings together 2,000+ developers and industry leaders. We'd love to explore sponsorship opportunities that align with your brand goals.<br /><br />
-                    Would you be open to a quick call this week?<br /><br />
-                    Best regards,<br />
-                    EventOS Team
+                {selectedLead.estimated_value > 0 && (
+                  <div>
+                    <span className="text-[10px] uppercase tracking-[0.15em] text-muted-foreground block mb-1">Estimated Value</span>
+                    <p className="text-lg font-mono text-primary">${selectedLead.estimated_value.toLocaleString()}</p>
                   </div>
-                </div>
+                )}
               </div>
 
               <div className="p-5 border-t border-border">
                 <button
+                  onClick={() => handleOutreach(selectedLead)}
                   className="w-full flex items-center justify-center gap-2 px-6 py-3 rounded-md bg-primary text-primary-foreground text-sm font-semibold hover:brightness-110 transition-all"
                   style={{ boxShadow: "0 0 20px hsl(43 72% 55% / 0.3)" }}
                 >

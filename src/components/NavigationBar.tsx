@@ -1,6 +1,9 @@
 import { useState } from "react";
-import { Terminal, Archive, Map, Gem, ChevronDown, Database, User } from "lucide-react";
+import { Terminal, Archive, Map, Gem, ChevronDown, Database, User, DollarSign, LogOut } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
+import { useQuery } from "@tanstack/react-query";
+import { fetchProjects } from "@/lib/api";
+import { useAuth } from "@/contexts/AuthContext";
 
 interface NavigationBarProps {
   activeTab: string;
@@ -12,11 +15,26 @@ const tabs = [
   { id: "vault", label: "The Vault", icon: Archive },
   { id: "logistics", label: "Logistics", icon: Map },
   { id: "sponsors", label: "Sponsor Hub", icon: Gem },
+  { id: "finance", label: "Finance", icon: DollarSign },
 ];
 
 const NavigationBar = ({ activeTab, onTabChange }: NavigationBarProps) => {
   const [missionOpen, setMissionOpen] = useState(false);
+  const [profileOpen, setProfileOpen] = useState(false);
+  const { user, logout } = useAuth();
   const gpuUsage = 73;
+
+  const { data: projects = [] } = useQuery({
+    queryKey: ["projects"],
+    queryFn: fetchProjects,
+    refetchInterval: 30000,
+  });
+
+  const projectNames = projects.length > 0
+    ? projects.map((p) => p.name)
+    : ["GDG_ANNUAL_GALA_2026", "TECH_SUMMIT_Q3", "DEVFEST_2026"];
+
+  const activeProject = projectNames[0] || "GDG_ANNUAL_GALA_2026";
 
   return (
     <nav className="h-14 border-b border-border bg-card flex items-center px-4 relative z-50">
@@ -32,7 +50,7 @@ const NavigationBar = ({ activeTab, onTabChange }: NavigationBarProps) => {
             Active Mission
           </span>
           <div className="flex items-center gap-1">
-            <span className="font-mono text-xs text-primary">GDG_ANNUAL_GALA_2026</span>
+            <span className="font-mono text-xs text-primary">{activeProject}</span>
             <ChevronDown size={12} className="text-primary/60" />
           </div>
           <AnimatePresence>
@@ -43,7 +61,7 @@ const NavigationBar = ({ activeTab, onTabChange }: NavigationBarProps) => {
                 exit={{ opacity: 0, y: -4 }}
                 className="absolute top-full left-0 mt-2 w-64 border border-primary/30 bg-card rounded-md shadow-lg overflow-hidden"
               >
-                {["GDG_ANNUAL_GALA_2026", "TECH_SUMMIT_Q3", "DEVFEST_2026"].map((m) => (
+                {projectNames.map((m) => (
                   <div
                     key={m}
                     className="px-3 py-2 font-mono text-xs text-foreground hover:bg-primary/10 hover:text-primary cursor-pointer transition-colors"
@@ -107,8 +125,39 @@ const NavigationBar = ({ activeTab, onTabChange }: NavigationBarProps) => {
           <span className="font-mono text-[10px] text-primary">{gpuUsage}%</span>
         </div>
         <Database size={14} className="text-brass" />
-        <div className="w-8 h-8 rounded-full border border-primary/50 flex items-center justify-center" style={{ boxShadow: "0 0 6px hsl(43 72% 55% / 0.2)" }}>
-          <User size={14} className="text-primary" />
+        <div className="relative">
+          <button
+            onClick={() => setProfileOpen(!profileOpen)}
+            className="w-8 h-8 rounded-full border border-primary/50 flex items-center justify-center overflow-hidden"
+            style={{ boxShadow: "0 0 6px hsl(43 72% 55% / 0.2)" }}
+          >
+            {user?.picture ? (
+              <img src={user.picture} alt={user.name} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+            ) : (
+              <User size={14} className="text-primary" />
+            )}
+          </button>
+          <AnimatePresence>
+            {profileOpen && (
+              <motion.div
+                initial={{ opacity: 0, y: -4 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -4 }}
+                className="absolute right-0 top-full mt-2 w-64 border border-primary/30 bg-card rounded-md shadow-lg overflow-hidden z-50"
+              >
+                <div className="p-3 border-b border-border">
+                  <p className="text-sm font-medium text-foreground">{user?.name}</p>
+                  <p className="text-[10px] font-mono text-muted-foreground">{user?.email}</p>
+                </div>
+                <button
+                  onClick={logout}
+                  className="w-full px-3 py-2 text-xs text-left text-muted-foreground hover:text-foreground hover:bg-muted/30 flex items-center gap-2 transition-colors"
+                >
+                  <LogOut size={12} /> Sign Out
+                </button>
+              </motion.div>
+            )}
+          </AnimatePresence>
         </div>
       </div>
     </nav>
