@@ -28,7 +28,6 @@ dist-ssr
 backend/.env
 
 # Backend
-backend/uploads/
 backend/exports/
 __pycache__/
 *.pyc
