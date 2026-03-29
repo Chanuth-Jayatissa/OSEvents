@@ -4,6 +4,7 @@ import { Search, Film, Image, FileText, MapPin, Download, Share2, X, Play } from
 import { useQuery } from "@tanstack/react-query";
 import Icosahedron from "./Icosahedron";
 import { fetchAssets, Asset } from "@/lib/api";
+import { useEventBus } from "@/contexts/EventBusContext";
 
 const categories = [
   { icon: Film, label: "Cinematics", filter: "video" },
@@ -18,10 +19,11 @@ const VaultView = () => {
   const [selectedAsset, setSelectedAsset] = useState<Asset | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [activeFilter, setActiveFilter] = useState("all");
+  const { activeProjectId } = useEventBus();
 
   const { data: assets = [], isLoading } = useQuery({
-    queryKey: ["assets"],
-    queryFn: () => fetchAssets(),
+    queryKey: ["assets", activeProjectId],
+    queryFn: () => fetchAssets(activeProjectId),
     refetchInterval: 5000,
   });
 

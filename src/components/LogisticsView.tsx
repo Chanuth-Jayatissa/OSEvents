@@ -4,18 +4,21 @@ import { CheckCircle, Circle, Upload, FileCheck, AlertTriangle, Clock } from "lu
 import { useQuery } from "@tanstack/react-query";
 import Icosahedron from "./Icosahedron";
 import { fetchRoadmap, fetchRules, uploadFile, Rule } from "@/lib/api";
+import { useEventBus } from "@/contexts/EventBusContext";
 import { toast } from "sonner";
 
 const LogisticsView = () => {
+  const { activeProjectId, addLog, setTabNotification } = useEventBus();
+
   const { data: roadmapData } = useQuery({
-    queryKey: ["roadmap"],
-    queryFn: () => fetchRoadmap(),
+    queryKey: ["roadmap", activeProjectId],
+    queryFn: () => fetchRoadmap(activeProjectId),
     refetchInterval: 5000,
   });
 
   const { data: rules = [] } = useQuery({
-    queryKey: ["rules"],
-    queryFn: () => fetchRules(),
+    queryKey: ["rules", activeProjectId],
+    queryFn: () => fetchRules(activeProjectId),
     refetchInterval: 5000,
   });
 
@@ -59,15 +62,23 @@ const LogisticsView = () => {
     }
 
     try {
+      addLog({
+        timestamp: new Date().toISOString(),
+        agent_name: "COMPLIANCE",
+        domain: "compliance",
+        message: `Uploading compliance document: ${file.name}`,
+        level: "info",
+      });
+      setTabNotification("command", true);
       toast.info(`Uploading ${file.name}...`);
-      const result = await uploadFile(file);
+      const result = await uploadFile(file, activeProjectId);
       toast.success(result.message);
     } catch (error) {
       toast.error("Upload failed", {
         description: error instanceof Error ? error.message : "Unknown error",
       });
     }
-  }, []);
+  }, [activeProjectId, addLog, setTabNotification]);
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
     e.preventDefault();

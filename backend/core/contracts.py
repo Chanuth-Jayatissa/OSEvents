@@ -15,6 +15,8 @@ import uuid
 
 class AgentLog(BaseModel):
     """A single log line emitted by an agent during execution."""
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    project_id: str = "default"
     timestamp: datetime = Field(default_factory=datetime.utcnow)
     agent_name: str          # e.g. "IMAGE_SUBAGENT"
     domain: str              # e.g. "marketing"

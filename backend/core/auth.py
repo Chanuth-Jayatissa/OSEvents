@@ -114,6 +114,17 @@ async def handle_google_callback(code: str) -> dict:
         user_doc["created_at"] = datetime.utcnow().isoformat()
         await database.insert_document("users", user_doc)
 
+        # Auto-create a starter project for new users
+        await database.insert_document("projects", {
+            "id": str(uuid.uuid4()),
+            "name": f"{name.split()[0] if name else 'My'}'s First Event",
+            "event_type": "general",
+            "attendee_count": 100,
+            "status": "planning",
+            "owner_id": user_id,
+            "created_at": datetime.utcnow().isoformat(),
+        })
+
     # Generate JWT
     payload = {
         "user_id": user_id,

@@ -137,6 +137,32 @@ async def send_command(request: CommandRequest):
     return response
 
 
+@app.get("/api/projects/{project_id}/logs")
+async def get_terminal_logs(project_id: str, limit: int = 100):
+    """Fetch the historical terminal logs for a project."""
+    docs = await database.get_many_documents(
+        "terminal_logs", 
+        {"project_id": project_id}, 
+        sort_by="timestamp", 
+        sort_desc=False,
+        limit=limit
+    )
+    
+    # Clean the ID serialization
+    for doc in docs:
+        if "_id" in doc:
+            doc["_id"] = str(doc["_id"])
+            
+    return docs
+
+
+@app.delete("/api/projects/{project_id}/logs")
+async def delete_terminal_logs(project_id: str):
+    """Clear all terminal history for a project."""
+    await database.delete_documents("terminal_logs", {"project_id": project_id})
+    return {"message": f"Cleared logs for {project_id}"}
+
+
 @app.get("/api/stream/{command_id}")
 async def stream_logs(command_id: str):
     """SSE endpoint — streams AgentLog events from a running command."""
@@ -281,13 +307,57 @@ async def get_budget(project_id: str):
 # ──────────────────────────────────────────────
 
 @app.get("/api/projects")
-async def get_projects():
-    """List all projects/missions."""
+async def get_projects(authorization: str = Header(default="")):
+    """List all projects belonging to the current user."""
+    user = await get_current_user(authorization)
     try:
-        projects = await database.get_documents("projects", {})
+        if user:
+            projects = await database.get_documents("projects", {"owner_id": user["user_id"]})
+        else:
+            projects = await database.get_documents("projects", {})
         return projects
     except Exception:
         return [{"id": "default", "name": "GDG_ANNUAL_GALA_2026", "status": "planning"}]
+
+
+@app.post("/api/projects")
+async def create_project(request: Request, authorization: str = Header(default="")):
+    """Create a new project owned by the authenticated user."""
+    user = await get_current_user(authorization)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+
+    body = await request.json()
+    project_name = body.get("name", "Untitled Project")
+    event_type = body.get("event_type", "general")
+    attendee_count = body.get("attendee_count", 100)
+
+    project_id = str(uuid.uuid4())
+    project_doc = {
+        "id": project_id,
+        "name": project_name,
+        "event_type": event_type,
+        "attendee_count": attendee_count,
+        "status": "planning",
+        "owner_id": user["user_id"],
+        "created_at": datetime.utcnow().isoformat(),
+    }
+
+    await database.insert_document("projects", project_doc)
+    return project_doc
+
+
+@app.delete("/api/projects/{project_id}")
+async def delete_project(project_id: str, authorization: str = Header(default="")):
+    """Delete a project owned by the authenticated user."""
+    user = await get_current_user(authorization)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+
+    deleted = await database.delete_document("projects", {"id": project_id, "owner_id": user["user_id"]})
+    if deleted == 0:
+        raise HTTPException(status_code=404, detail="Project not found")
+    return {"message": "Project deleted", "project_id": project_id}
 
 
 # ──────────────────────────────────────────────

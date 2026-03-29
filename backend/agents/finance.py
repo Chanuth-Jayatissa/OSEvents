@@ -65,15 +65,15 @@ Attendees: {attendee_count}
 Duration: {duration_days} day(s)
 {"Known venue cost: $" + str(venue_cost) if venue_cost else "Venue cost: estimate based on event size"}
 
-Create a comprehensive budget with these categories. Return ONLY a JSON object:
+Create a comprehensive budget with these categories. Return ONLY a valid JSON object matching this schema exactly:
 {{
-    "total_budget": number,
+    "total_budget": 0,
     "categories": [
         {{
             "name": "Category Name",
-            "estimated": dollar_amount,
+            "estimated": 0,
             "notes": "brief explanation",
-            "subcategories": [{{"name": "...", "cost": number}}]
+            "subcategories": [{{"name": "...", "cost": 0}}]
         }}
     ]
 }}
@@ -85,16 +85,14 @@ Prizes (if hackathon), Contingency (10% of total)."""
             response = client.models.generate_content(
                 model="gemini-3.1-pro-preview",
                 contents=prompt,
-                config=genai.types.GenerateContentConfig(temperature=0.3, max_output_tokens=4096),
+                config=genai.types.GenerateContentConfig(
+                    temperature=0.3,
+                    max_output_tokens=4096,
+                    response_mime_type="application/json",
+                ),
             )
 
-            raw = response.text.strip()
-            if raw.startswith("```"):
-                raw = raw.split("\n", 1)[1] if "\n" in raw else raw[3:]
-            if raw.endswith("```"):
-                raw = raw[:-3]
-
-            result = json.loads(raw.strip())
+            result = json.loads(response.text.strip())
             total_budget = result.get("total_budget", 0)
 
             for cat in result.get("categories", []):

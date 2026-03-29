@@ -29,8 +29,9 @@ Available intents (you may select multiple for parallel execution):
 - "research_context" — User wants research on a topic, benchmarking data, or general web-based context
 - "plan_budget" — User wants to create/plan a budget for the event
 - "track_expense" — User wants to log an expense against the budget
+- "respond_user" — User is asking a conversational question, asking for advice, checking status, or wants general chat.
 
-Respond with ONLY a valid JSON object (no markdown, no explanation):
+Respond with ONLY a valid JSON object matching this schema exactly (no markdown formatting required as output is forced to pure JSON):
 {
   "intents": ["intent1", "intent2"],
   "params": {
@@ -41,9 +42,9 @@ Respond with ONLY a valid JSON object (no markdown, no explanation):
 
 Rules:
 1. You MUST select at least one intent.
-2. If the prompt maps to multiple intents, include ALL of them — they will execute in parallel.
-3. Extract relevant parameters from the prompt for each intent (e.g., count, query, topic, recipient).
-4. If the prompt is vague, use "research_context" as a fallback intent.
+2. If the user is just chatting or asking a knowledge question, select ONLY "respond_user" and provide the response in params.
+3. If the prompt maps to multiple intents, include ALL of them — they will execute in parallel.
+4. Extract relevant parameters from the prompt for each intent (e.g., count, query, topic, recipient).
 5. For "generate_image" params include: prompt (description of what to generate), width, height.
 6. For "generate_video" params include: prompt, duration_seconds.
 7. For "find_sponsors" params include: query, count, industry (if mentioned).
@@ -54,6 +55,7 @@ Rules:
 12. For "research_context" params include: query, max_sources.
 13. For "plan_budget" params include: event_type, attendee_count, duration_days.
 14. For "track_expense" params include: category, amount, description.
+15. For "respond_user" params include: response (The natural language answer to the user's question, pretending you are the Master Brain).
 """
 
 
@@ -82,23 +84,16 @@ async def route(prompt: str, project_id: str = "default") -> dict:
                 system_instruction=SYSTEM_PROMPT,
                 temperature=0.1,
                 max_output_tokens=2048,
+                response_mime_type="application/json",
             ),
         )
 
         raw_text = response.text.strip()
-
-        # Clean markdown code fences if present
-        if raw_text.startswith("```"):
-            raw_text = raw_text.split("\n", 1)[1] if "\n" in raw_text else raw_text[3:]
-        if raw_text.endswith("```"):
-            raw_text = raw_text[:-3]
-        raw_text = raw_text.strip()
-
         result = json.loads(raw_text)
 
         # Validate structure
         if "intents" not in result or not isinstance(result["intents"], list):
-            result = {"intents": ["research_context"], "params": {"research_context": {"query": prompt}}}
+            result = {"intents": ["respond_user"], "params": {"respond_user": {"response": "I'm not sure what you mean. Could you clarify?"}}}
 
         if "params" not in result:
             result["params"] = {}
@@ -108,12 +103,12 @@ async def route(prompt: str, project_id: str = "default") -> dict:
     except json.JSONDecodeError as e:
         print(f"⚠️ Master Brain JSON parse error: {e}")
         return {
-            "intents": ["research_context"],
-            "params": {"research_context": {"query": prompt}}
+            "intents": ["respond_user"],
+            "params": {"respond_user": {"response": "I encountered a processing error while routing."}}
         }
     except Exception as e:
         print(f"❌ Master Brain error: {e}")
         return {
-            "intents": ["research_context"],
-            "params": {"research_context": {"query": prompt}}
+            "intents": ["respond_user"],
+            "params": {"respond_user": {"response": "I encountered a system error."}}
         }

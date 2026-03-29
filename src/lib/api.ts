@@ -199,9 +199,26 @@ export async function fetchBudgets(projectId: string = "default"): Promise<Budge
   return apiFetch<Budget>(`/budgets/${projectId}`);
 }
 
-/** List all projects/missions. */
+/** List all projects/missions for the current user. */
 export async function fetchProjects(): Promise<Project[]> {
   return apiFetch<Project[]>("/projects");
+}
+
+/** Create a new project. */
+export async function createProject(
+  name: string,
+  eventType: string = "general",
+  attendeeCount: number = 100,
+): Promise<Project> {
+  return apiFetch<Project>("/projects", {
+    method: "POST",
+    body: JSON.stringify({ name, event_type: eventType, attendee_count: attendeeCount }),
+  });
+}
+
+/** Delete a project by ID. */
+export async function deleteProject(projectId: string): Promise<void> {
+  await apiFetch(`/projects/${projectId}`, { method: "DELETE" });
 }
 
 /** Upload a file (PDF) for compliance processing. */
@@ -218,4 +235,14 @@ export async function uploadFile(file: File, projectId: string = "default"): Pro
     throw new Error(`Upload error ${res.status}: ${await res.text()}`);
   }
   return res.json();
+}
+
+/** Fetch historical terminal logs for a project. */
+export async function fetchTerminalLogs(projectId: string): Promise<AgentLog[]> {
+  return apiFetch<AgentLog[]>(`/projects/${projectId}/logs`);
+}
+
+/** Clear all terminal history for a project. */
+export async function deleteTerminalLogs(projectId: string): Promise<void> {
+  await apiFetch(`/projects/${projectId}/logs`, { method: "DELETE" });
 }

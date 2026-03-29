@@ -3,16 +3,18 @@ import { motion, AnimatePresence } from "framer-motion";
 import { X, Send, Search } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import Icosahedron from "./Icosahedron";
-import { fetchLeads, sendCommand, Lead } from "@/lib/api";
+import { fetchLeads, Lead } from "@/lib/api";
+import { useEventBus } from "@/contexts/EventBusContext";
 import { toast } from "sonner";
 
 const SponsorHub = () => {
   const [selectedLead, setSelectedLead] = useState<Lead | null>(null);
   const [autoScan, setAutoScan] = useState(true);
+  const { activeProjectId, sendGlobalCommand, addLog, setTabNotification } = useEventBus();
 
   const { data: leads = [], isLoading } = useQuery({
-    queryKey: ["leads"],
-    queryFn: () => fetchLeads(),
+    queryKey: ["leads", activeProjectId],
+    queryFn: () => fetchLeads(activeProjectId),
     refetchInterval: 5000,
   });
 
@@ -26,9 +28,16 @@ const SponsorHub = () => {
 
   const handleOutreach = async (lead: Lead) => {
     try {
-      await sendCommand(
-        `Send outreach email to ${lead.contact} at ${lead.company} for sponsorship`,
-        "default"
+      addLog({
+        timestamp: new Date().toISOString(),
+        agent_name: "COMMUNICATION",
+        domain: "communication",
+        message: `Outreach initiated for ${lead.contact} at ${lead.company}`,
+        level: "info",
+      });
+      setTabNotification("command", true);
+      await sendGlobalCommand(
+        `Send outreach email to ${lead.contact} at ${lead.company} for sponsorship`
       );
       toast.success("Outreach initiated", {
         description: `Email agent drafting for ${lead.contact} at ${lead.company}`,

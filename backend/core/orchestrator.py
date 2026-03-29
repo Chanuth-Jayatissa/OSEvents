@@ -21,9 +21,30 @@ def get_log_queue(command_id: str) -> asyncio.Queue | None:
     return _log_queues.get(command_id)
 
 
-def create_log_queue(command_id: str) -> asyncio.Queue:
+class PersistentLogQueue(asyncio.Queue):
+    def __init__(self, project_id: str, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.project_id = project_id
+
+    async def put(self, logItem: AgentLog):
+        # Attach project ID
+        logItem.project_id = self.project_id
+        
+        # Insert into MongoDB anonymously in the background
+        # Do not block the fast put() for SSE streams
+        async def _save():
+            try:
+                await database.insert_document("terminal_logs", logItem.model_dump())
+            except Exception as e:
+                print(f"Failed to save terminal log: {e}")
+                
+        asyncio.create_task(_save())
+        await super().put(logItem)
+
+
+def create_log_queue(command_id: str, project_id: str) -> asyncio.Queue:
     """Create a new log queue for a command."""
-    queue = asyncio.Queue()
+    queue = PersistentLogQueue(project_id)
     _log_queues[command_id] = queue
     return queue
 
@@ -68,72 +89,92 @@ async def _run_single_agent(
 async def execute(prompt: str, project_id: str = "default") -> CommandResponse:
     """
     Main orchestration flow:
-    1. Call Master Brain to extract intents
-    2. Look up agent functions from the registry
-    3. Fire all matched agents in parallel via asyncio.gather()
-    4. Collect results and write to MongoDB
-    5. Return the CommandResponse immediately (agents run in background)
+    1. Instantly return a CommandResponse so frontend connects to SSE.
+    2. In background: Call Master Brain to extract intents.
+    3. Look up agent functions from the registry.
+    4. Fire all matched agents in parallel via asyncio.gather().
+    5. Collect results and write to MongoDB.
     """
-    from backend.core.master_brain import route
-    from backend.agents import AGENT_REGISTRY
-
     command_id = str(uuid.uuid4())
-    log_queue = create_log_queue(command_id)
+    log_queue = create_log_queue(command_id, project_id)
 
-    # Step 1: Route the prompt
+    # Automatically save user prompt into the DB terminal stream 
+    await log_queue.put(AgentLog(
+        agent_name="USER",
+        domain="core",
+        message=f"{prompt}",
+        level="info"
+    ))
+
+    # Inform the stream that Master Brain is already listening
     await log_queue.put(AgentLog(
         agent_name="MASTER_BRAIN",
         domain="core",
-        message=f"Analyzing prompt: \"{prompt[:80]}{'...' if len(prompt) > 80 else ''}\"",
+        message=f"Analyzing directive...",
         level="info",
     ))
 
-    routing_result = await route(prompt, project_id)
-    intents = routing_result.get("intents", [])
-    params = routing_result.get("params", {})
-
-    await log_queue.put(AgentLog(
-        agent_name="MASTER_BRAIN",
-        domain="core",
-        message=f"Detected {len(intents)} intent(s): {', '.join(intents)}",
-        level="success",
-    ))
-
-    # Step 2: Match intents to agent functions
-    agents_to_run = []
-    agents_dispatched = []
-
-    for intent in intents:
-        if intent in AGENT_REGISTRY:
-            agent_fn = AGENT_REGISTRY[intent]
-            intent_params = params.get(intent, {})
-            agents_to_run.append((agent_fn, intent, intent_params))
-            agents_dispatched.append(intent)
-
-            await log_queue.put(AgentLog(
-                agent_name="ORCHESTRATOR",
-                domain="core",
-                message=f"Dispatching agent: {intent}",
-                level="info",
-            ))
-        else:
-            await log_queue.put(AgentLog(
-                agent_name="ORCHESTRATOR",
-                domain="core",
-                message=f"⚠ No agent registered for intent: {intent}",
-                level="warning",
-            ))
-
-    # Step 3: Create the response immediately
+    # We return immediately, so intents are not known yet in the HTTP response body
     response = CommandResponse(
         command_id=command_id,
-        intents=intents,
-        agents_dispatched=agents_dispatched,
+        intents=["analyzing"],
+        agents_dispatched=[],
     )
 
-    # Step 4: Fire agents in parallel (background task)
     async def _run_all():
+        from backend.core.master_brain import route
+        from backend.agents import AGENT_REGISTRY
+
         try:
+            # Step 1: Route the prompt (Master Brain "thinking")
+            routing_result = await route(prompt, project_id)
+            intents = routing_result.get("intents", [])
+            params = routing_result.get("params", {})
+
+            await log_queue.put(AgentLog(
+                agent_name="MASTER_BRAIN",
+                domain="core",
+                message=f"Detected {len(intents)} intent(s): {', '.join(intents)}",
+                level="success",
+            ))
+
+            # Step 2: Match intents to agent functions
+            agents_to_run = []
+            agents_dispatched = []
+
+            for intent in intents:
+                # If conversational response, handle directly here
+                if intent == "respond_user":
+                    response_text = params.get("respond_user", {}).get("response", "I don't have an answer.")
+                    await log_queue.put(AgentLog(
+                        agent_name="MASTER_BRAIN",
+                        domain="core",
+                        message=response_text,
+                        level="success",
+                    ))
+                    continue
+
+                if intent in AGENT_REGISTRY:
+                    agent_fn = AGENT_REGISTRY[intent]
+                    intent_params = params.get(intent, {})
+                    agents_to_run.append((agent_fn, intent, intent_params))
+                    agents_dispatched.append(intent)
+
+                    await log_queue.put(AgentLog(
+                        agent_name="ORCHESTRATOR",
+                        domain="core",
+                        message=f"Dispatching agent: {intent}",
+                        level="info",
+                    ))
+                else:
+                    await log_queue.put(AgentLog(
+                        agent_name="ORCHESTRATOR",
+                        domain="core",
+                        message=f"⚠ No agent registered for intent: {intent}",
+                        level="warning",
+                    ))
+
+            # Step 3: Fire underlying agents in parallel
             if agents_to_run:
                 tasks = [
                     _run_single_agent(fn, intent, intent_params, project_id, log_queue)
@@ -141,7 +182,7 @@ async def execute(prompt: str, project_id: str = "default") -> CommandResponse:
                 ]
                 results = await asyncio.gather(*tasks, return_exceptions=True)
 
-                # Step 5: Process results — write to MongoDB
+                # Step 4: Process results — write to MongoDB
                 for result in results:
                     if isinstance(result, AgentResult) and result.status == "success":
                         try:
@@ -171,14 +212,22 @@ async def execute(prompt: str, project_id: str = "default") -> CommandResponse:
                         ))
 
                 _results[command_id] = [r for r in results if isinstance(r, AgentResult)]
-
+                
             # Signal completion
-            await log_queue.put(AgentLog(
-                agent_name="ORCHESTRATOR",
-                domain="core",
-                message="All agents completed. Awaiting next directive.",
-                level="success",
-            ))
+            if agents_to_run:
+                await log_queue.put(AgentLog(
+                    agent_name="ORCHESTRATOR",
+                    domain="core",
+                    message="All agents completed. Awaiting next directive.",
+                    level="success",
+                ))
+            else:
+                await log_queue.put(AgentLog(
+                    agent_name="ORCHESTRATOR",
+                    domain="core",
+                    message="Master Brain responded. Awaiting next directive.",
+                    level="info",
+                ))
 
             # Sentinel to close SSE stream
             await log_queue.put(AgentLog(
@@ -202,7 +251,7 @@ async def execute(prompt: str, project_id: str = "default") -> CommandResponse:
                 level="info",
             ))
 
-    # Launch the background task
+    # Launch the background task immediately before returning
     asyncio.create_task(_run_all())
 
     return response

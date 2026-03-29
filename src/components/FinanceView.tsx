@@ -2,13 +2,16 @@ import { motion } from "framer-motion";
 import { DollarSign, TrendingUp, TrendingDown, PieChart, Download, FileSpreadsheet } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import Icosahedron from "./Icosahedron";
-import { fetchBudgets, sendCommand } from "@/lib/api";
+import { fetchBudgets, AgentLog } from "@/lib/api";
+import { useEventBus } from "@/contexts/EventBusContext";
 import { toast } from "sonner";
 
 const FinanceView = () => {
+  const { activeProjectId, sendGlobalCommand, addLog, setTabNotification } = useEventBus();
+
   const { data: budget, isLoading } = useQuery({
-    queryKey: ["budgets", "default"],
-    queryFn: () => fetchBudgets("default"),
+    queryKey: ["budgets", activeProjectId],
+    queryFn: () => fetchBudgets(activeProjectId),
     refetchInterval: 5000,
   });
 
@@ -23,7 +26,15 @@ const FinanceView = () => {
 
   const handleGenerateBudget = async () => {
     try {
-      await sendCommand("Plan a budget for a 500-person hackathon spanning 2 days", "default");
+      addLog({
+        timestamp: new Date().toISOString(),
+        agent_name: "FINANCE",
+        domain: "finance",
+        message: "Budget generation triggered from Finance tab",
+        level: "info",
+      });
+      setTabNotification("command", true);
+      await sendGlobalCommand("Plan a budget for a 500-person hackathon spanning 2 days");
       toast.success("Budget Planner agent dispatched");
     } catch {
       toast.error("Failed to trigger budget generation");

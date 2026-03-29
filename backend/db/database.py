@@ -14,6 +14,7 @@ _db = None
 COLLECTIONS = [
     "projects", "assets", "leads", "roadmap",
     "rules", "context", "budgets", "agent_logs",
+    "terminal_logs",
 ]
 
 
