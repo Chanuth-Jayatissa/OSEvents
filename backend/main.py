@@ -387,15 +387,53 @@ async def upload_file(file: UploadFile = File(...), project_id: str = "default")
     from backend.agents.compliance import rule_extractor
 
     command_id = str(uuid.uuid4())
-    log_queue = create_log_queue(command_id)
+    log_queue = create_log_queue(command_id, project_id)
 
-    asyncio.create_task(
-        rule_extractor(
-            params={"file_path": file_path, "project_id": project_id},
-            log_queue=log_queue,
-            project_id=project_id,
-        )
-    )
+    async def process_document():
+        from backend.core.refinement import refine_agent_output
+        from backend.core.contracts import AgentLog
+        from backend.db import database
+        
+        try:
+            result = await refine_agent_output(
+                agent_fn=rule_extractor,
+                params={"file_path": file_path},
+                log_queue=log_queue,
+                project_id=project_id,
+                original_prompt=f"Extract rules from uploaded document: {file.filename}",
+                max_rounds=5,
+            )
+            
+            if result.status == "success":
+                await database.insert_document(result.collection, result.data)
+                await log_queue.put(AgentLog(
+                    agent_name=result.agent_name,
+                    domain=result.domain,
+                    message=f"Result saved to '{result.collection}' collection",
+                    level="success",
+                ))
+            
+            await log_queue.put(AgentLog(
+                agent_name="SYSTEM",
+                domain="core",
+                message="DONE",
+                level="info",
+            ))
+        except Exception as e:
+            await log_queue.put(AgentLog(
+                agent_name="RULE_EXTRACTOR",
+                domain="compliance",
+                message=f"Processing error: {e}",
+                level="error",
+            ))
+            await log_queue.put(AgentLog(
+                agent_name="SYSTEM",
+                domain="core",
+                message="DONE",
+                level="info",
+            ))
+
+    asyncio.create_task(process_document())
 
     return {
         "message": f"File '{file.filename}' uploaded and processing started",

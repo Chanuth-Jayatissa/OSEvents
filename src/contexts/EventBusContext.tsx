@@ -111,6 +111,7 @@ export const EventBusProvider = ({ children }: { children: ReactNode }) => {
   const [tabNotifications, setTabNotifications] = useState<Record<string, boolean>>({});
   const [activeProjectId, setActiveProjectId] = useState("default");
   const [projects, setProjects] = useState<Project[]>([]);
+  const [hasLoadedProjects, setHasLoadedProjects] = useState(false);
   const cleanupRef = useRef<(() => void) | null>(null);
 
   const addLog = useCallback((log: AgentLog) => {
@@ -144,9 +145,24 @@ export const EventBusProvider = ({ children }: { children: ReactNode }) => {
     }
   }, [activeProjectId]);
 
-  // Load historical logs when project switches
+  // Auto-fetch projects on mount so we select the user's real project
   useEffect(() => {
-    if (!activeProjectId) return;
+    fetchProjects()
+      .then((fetched) => {
+        setProjects(fetched);
+        if (fetched.length > 0) {
+          setActiveProjectId(fetched[0].id);
+        }
+        setHasLoadedProjects(true);
+      })
+      .catch(() => {
+        setHasLoadedProjects(true);
+      });
+  }, []);
+
+  // Load historical logs when project switches (only after projects are loaded)
+  useEffect(() => {
+    if (!activeProjectId || !hasLoadedProjects) return;
     
     // Reset active states
     setActiveAgents(new Set());
@@ -155,7 +171,9 @@ export const EventBusProvider = ({ children }: { children: ReactNode }) => {
     // Fetch DB history
     fetchTerminalLogs(activeProjectId)
       .then(logs => {
-        setTerminalLogs(logs);
+        // Filter out any DONE sentinel logs that may exist in old data
+        const filtered = logs.filter(l => l.message !== "DONE");
+        setTerminalLogs(filtered);
       })
       .catch(err => {
         console.error("Failed to load terminal history", err);
@@ -167,7 +185,7 @@ export const EventBusProvider = ({ children }: { children: ReactNode }) => {
       cleanupRef.current();
       cleanupRef.current = null;
     }
-  }, [activeProjectId]);
+  }, [activeProjectId, hasLoadedProjects]);
 
   const setTabNotification = useCallback((tabId: string, value: boolean) => {
     setTabNotifications((prev) => ({ ...prev, [tabId]: value }));
@@ -215,12 +233,14 @@ export const EventBusProvider = ({ children }: { children: ReactNode }) => {
             setActiveAgentCount(0);
             setActiveAgents(new Set());
             setActiveSubAgents(new Set());
+            refreshProjects();
           },
           () => {
             setIsProcessing(false);
             setActiveAgentCount(0);
             setActiveAgents(new Set());
             setActiveSubAgents(new Set());
+            refreshProjects();
           },
         );
 

@@ -34,6 +34,14 @@ class AgentResult(BaseModel):
     logs: list[AgentLog] = []
 
 
+class RefinementReview(BaseModel):
+    """Review verdict from the Master Brain after inspecting agent output."""
+    verdict: Literal["APPROVED", "REFINE"]
+    feedback: str = ""
+    refined_params: dict = {}
+    round_number: int = 1
+
+
 # ──────────────────────────────────────────────
 # API Request / Response Models
 # ──────────────────────────────────────────────

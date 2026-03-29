@@ -6,15 +6,16 @@ import { componentTagger } from "lovable-tagger";
 // https://vitejs.dev/config/
 export default defineConfig(({ mode }) => ({
   server: {
-    host: "::",
+    allowedHosts: ['eventos.karthikeyathota.page', '::', 'vultr.karthikeyathota.page'],
     port: 8080,
     hmr: {
       overlay: false,
     },
     proxy: {
       "/api": {
-        target: "http://localhost:8000",
-        changeOrigin: true,
+        //target: "http://localhost:8000",
+        target: "https://vultr.karthikeyathota.page",
+	changeOrigin: true,
       },
     },
   },

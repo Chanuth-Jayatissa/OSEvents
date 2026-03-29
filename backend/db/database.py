@@ -95,3 +95,31 @@ async def count_documents(collection: str, filter_: dict | None = None) -> int:
     """Count documents in a collection."""
     filter_ = filter_ or {}
     return await get_db()[collection].count_documents(filter_)
+
+
+async def get_many_documents(
+    collection: str,
+    filter_: dict | None = None,
+    sort_by: str | None = None,
+    sort_desc: bool = True,
+    limit: int = 100,
+) -> list[dict]:
+    """Get documents with optional sorting."""
+    filter_ = filter_ or {}
+    cursor = get_db()[collection].find(filter_)
+    if sort_by:
+        from pymongo import ASCENDING, DESCENDING
+        direction = DESCENDING if sort_desc else ASCENDING
+        cursor = cursor.sort(sort_by, direction)
+    cursor = cursor.limit(limit)
+    docs = []
+    async for doc in cursor:
+        doc["_id"] = str(doc["_id"])
+        docs.append(doc)
+    return docs
+
+
+async def delete_documents(collection: str, filter_: dict) -> int:
+    """Delete matching documents. Returns count deleted."""
+    result = await get_db()[collection].delete_many(filter_)
+    return result.deleted_count

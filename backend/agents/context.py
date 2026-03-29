@@ -39,10 +39,36 @@ async def web_researcher(params: dict, log_queue: asyncio.Queue, project_id: str
     Web Researcher Sub-agent.
     Tools: Google Custom Search API + aiohttp + Gemini Flash for summarization.
     """
-    query = params.get("query", "event planning best practices")
+    raw_query = params.get("query", "event planning best practices")
     max_sources = params.get("max_sources", 5)
 
-    await _emit(log_queue, "WEB_RESEARCHER", f"Searching: \"{query}\"")
+    gemini_key = os.getenv("GEMINI_API_KEY")
+    search_query = raw_query
+
+    # Step 0: Smart Query Expansion
+    if gemini_key and genai:
+        try:
+            client = genai.Client(api_key=gemini_key)
+            expansion_prompt = f"""Generate a highly specific Google search query based on this user request: "{raw_query}"
+Focus the search on finding real-world, localized context such as:
+- Previous similar events at the same location/institution
+- Specific departments, rules, or technology requirements related to the location
+- Past examples or established guidelines
+
+Return ONLY the optimal Google search query string. Keep it under 6 words."""
+            
+            response = client.models.generate_content(
+                model="gemini-3.1-pro-preview",
+                contents=expansion_prompt,
+                config=genai.types.GenerateContentConfig(temperature=0.2, max_output_tokens=50),
+            )
+            expanded = response.text.strip().replace('"', '')
+            if expanded:
+                search_query = expanded
+        except Exception as e:
+            await _emit(log_queue, "WEB_RESEARCHER", f"Query expansion fallback: {e}", "warning")
+
+    await _emit(log_queue, "WEB_RESEARCHER", f"Original: '{raw_query}' → Searching: '{search_query}'")
 
     sources = []
     raw_content = []
@@ -55,7 +81,7 @@ async def web_researcher(params: dict, log_queue: asyncio.Queue, project_id: str
         try:
             url = (
                 f"https://www.googleapis.com/customsearch/v1"
-                f"?key={api_key}&cx={cse_id}&q={query}&num={min(max_sources, 10)}"
+                f"?key={api_key}&cx={cse_id}&q={search_query}&num={min(max_sources, 10)}"
             )
 
             async with aiohttp.ClientSession() as session:
@@ -110,9 +136,10 @@ async def web_researcher(params: dict, log_queue: asyncio.Queue, project_id: str
 
             client = genai.Client(api_key=gemini_key)
 
-            prompt = f"""Summarize the following web research into concise, actionable context for event planning.
+            prompt = f"""Summarize the following web research into actionable, highly specific context for event planning.
+Focus on identifying past events, specific rules, required technologies, or key departments involved.
 
-Research query: "{query}"
+Research context: "{raw_query}"
 
 Sources:
 {chr(10).join(raw_content)}
@@ -172,7 +199,7 @@ Return ONLY the JSON array."""
         data={
             "id": str(uuid.uuid4()),
             "project_id": project_id,
-            "topic": query,
+            "topic": raw_query,
             "sources": summarized_sources,
             "created_at": datetime.utcnow().isoformat(),
         },

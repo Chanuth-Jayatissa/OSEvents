@@ -24,8 +24,9 @@ load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_OAUTH_CLIENT_ID", "")
 GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_OAUTH_CLIENT_SECRET", "")
 JWT_SECRET = os.getenv("JWT_SECRET", "eventos-dev-secret")
-FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:8080")
-REDIRECT_URI = os.getenv("GOOGLE_REDIRECT_URI", "http://localhost:8000/api/auth/google/callback")
+FRONTEND_URL = os.getenv("FRONTEND_URL", "https://eventos.karthikeyathota.page")
+REDIRECT_URI = os.getenv("GOOGLE_REDIRECT_URI", "https://vultr.karthikeyathota.page/api/auth/google/callback")
+
 
 # OAuth scopes — openid/email/profile for login, gmail.send for email
 SCOPES = [

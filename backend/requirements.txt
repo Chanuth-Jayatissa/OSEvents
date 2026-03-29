@@ -13,3 +13,6 @@ aiohttp
 discord.py
 sendgrid
 pdf2image
+PyJWT
+google-auth
+google-api-python-client

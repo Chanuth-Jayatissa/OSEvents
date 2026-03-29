@@ -30,15 +30,17 @@ class PersistentLogQueue(asyncio.Queue):
         # Attach project ID
         logItem.project_id = self.project_id
         
-        # Insert into MongoDB anonymously in the background
-        # Do not block the fast put() for SSE streams
-        async def _save():
-            try:
-                await database.insert_document("terminal_logs", logItem.model_dump())
-            except Exception as e:
-                print(f"Failed to save terminal log: {e}")
-                
-        asyncio.create_task(_save())
+        # Don't persist the DONE sentinel — it's only an SSE control signal
+        if logItem.message != "DONE":
+            # Insert into MongoDB in the background
+            # Do not block the fast put() for SSE streams
+            async def _save():
+                try:
+                    await database.insert_document("terminal_logs", logItem.model_dump())
+                except Exception as e:
+                    print(f"Failed to save terminal log: {e}")
+                    
+            asyncio.create_task(_save())
         await super().put(logItem)
 
 
@@ -61,11 +63,34 @@ async def _run_single_agent(
     params: dict,
     project_id: str,
     log_queue: asyncio.Queue,
+    original_prompt: str,
 ) -> AgentResult | None:
     """Run a single agent function, catching errors gracefully."""
     try:
-        # Pass params and log_queue to the agent
-        result = await agent_fn(params=params, log_queue=log_queue, project_id=project_id)
+        from backend.core.refinement import refine_agent_output
+
+        # Agents that produce structured JSON data suitable for critique
+        AGENTS_TO_REFINE = {
+            "plan_budget",
+            "match_tiers",
+            "build_timeline",
+            "extract_rules",
+            "research_context"
+        }
+
+        if intent in AGENTS_TO_REFINE:
+            result = await refine_agent_output(
+                agent_fn=agent_fn,
+                params=params,
+                log_queue=log_queue,
+                project_id=project_id,
+                original_prompt=original_prompt,
+                max_rounds=5,
+            )
+        else:
+            # Pass params and log_queue to the agent directly
+            result = await agent_fn(params=params, log_queue=log_queue, project_id=project_id)
+            
         return result
     except Exception as e:
         error_log = AgentLog(
@@ -126,6 +151,37 @@ async def execute(prompt: str, project_id: str = "default") -> CommandResponse:
         from backend.agents import AGENT_REGISTRY
 
         try:
+            # --- AUTO-RENAME PROJECT LOGIC ---
+            project_db = await database.get_one_document("projects", {"id": project_id})
+            is_default_name = project_db and project_db.get("name") in ["Untitled Project", "default", "New Project"]
+            
+            if is_default_name:
+                import os
+                api_key = os.getenv("GEMINI_API_KEY")
+                if api_key:
+                    try:
+                        from google import genai
+                        client = genai.Client(api_key=api_key)
+                        rename_prompt = f"Generate a short, Title Cased project name (2-5 words) based on this user request: '{prompt}'. Return ONLY the name."
+                        response = client.models.generate_content(
+                            model="gemini-3.1-pro-preview",
+                            contents=rename_prompt,
+                            config=genai.types.GenerateContentConfig(temperature=0.3, max_output_tokens=20),
+                        )
+                        new_name = response.text.strip().replace('"', '')
+                        
+                        if new_name:
+                            await database.update_document("projects", {"id": project_id}, {"name": new_name})
+                            await log_queue.put(AgentLog(
+                                agent_name="MASTER_BRAIN",
+                                domain="core",
+                                message=f"Auto-assigned project name: {new_name}",
+                                level="success",
+                            ))
+                    except Exception as e:
+                        print(f"Failed to auto-rename project: {e}")
+            # ---------------------------------
+
             # Step 1: Route the prompt (Master Brain "thinking")
             routing_result = await route(prompt, project_id)
             intents = routing_result.get("intents", [])
@@ -166,6 +222,14 @@ async def execute(prompt: str, project_id: str = "default") -> CommandResponse:
                         message=f"Dispatching agent: {intent}",
                         level="info",
                     ))
+                    if intent_params:
+                        import json
+                        await log_queue.put(AgentLog(
+                            agent_name="ORCHESTRATOR",
+                            domain="core",
+                            message=f"Task parameters: {json.dumps(intent_params, default=str)}",
+                            level="info",
+                        ))
                 else:
                     await log_queue.put(AgentLog(
                         agent_name="ORCHESTRATOR",
@@ -177,7 +241,7 @@ async def execute(prompt: str, project_id: str = "default") -> CommandResponse:
             # Step 3: Fire underlying agents in parallel
             if agents_to_run:
                 tasks = [
-                    _run_single_agent(fn, intent, intent_params, project_id, log_queue)
+                    _run_single_agent(fn, intent, intent_params, project_id, log_queue, prompt)
                     for fn, intent, intent_params in agents_to_run
                 ]
                 results = await asyncio.gather(*tasks, return_exceptions=True)
